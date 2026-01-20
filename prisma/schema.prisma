@@ -1,14 +1,26 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+model Instance {
+  id              Int       @id @default(autoincrement())
+  name            String
+  link            String    @unique
+  websocketLink   String    @map("websocket_link")
+  region          String?   // Store as JSON string (GeoJSON)
+  imageUrl        String?   @map("image_url")
+  userCount       Int       @default(0) @map("user_count")
+  status          String    @default("pending") // 'pending' or 'verified'
+  lastFetchedAt   DateTime? @map("last_fetched_at") // Track when registry last fetched /metadata
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@map("instances")
 }

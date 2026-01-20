@@ -17,11 +17,11 @@ app.get("/health", (req, res) => {
 
 // POST /register - Instance administrator registers their instance
 app.post("/register", async (req, res) => {
-  const { metadata, config } = req.body;
+  const { details, config } = req.body;
 
   // Basic presence checks only
-  if (!metadata || !config) {
-    return res.status(400).json({ error: "metadata and config are required" });
+  if (!details || !config) {
+    return res.status(400).json({ error: "details and config are required" });
   }
   const requiredMetaKeys = [
     "name",
@@ -32,27 +32,27 @@ app.post("/register", async (req, res) => {
     "userCount",
   ];
   const missing = requiredMetaKeys.filter(
-    (k) => metadata[k] === undefined || metadata[k] === null,
+    (k) => details[k] === undefined || details[k] === null,
   );
   if (missing.length) {
     return res
       .status(400)
-      .json({ error: `Missing metadata fields: ${missing.join(", ")}` });
+      .json({ error: `Missing details fields: ${missing.join(", ")}` });
   }
 
   try {
     const result = await pool.query(
       `INSERT INTO instances 
        (name, link, websocket_link, region, image_url, user_count, status) 
-       VALUES ($1, $2, $3, ST_GeomFromGeoJSON($4), $5, $6, 'pending')
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending')
        RETURNING *;`,
       [
-        metadata.name,
-        metadata.link,
-        metadata.websocketLink,
-        metadata.region ? JSON.stringify(metadata.region) : null,
-        metadata.imageUrl || null,
-        metadata.userCount || 0,
+        details.name,
+        details.link,
+        details.websocketLink,
+        details.region ? JSON.stringify(details.region) : null,
+        details.imageUrl || null,
+        details.userCount || 0,
       ],
     );
 
@@ -80,10 +80,11 @@ app.get("/instances", async (req, res) => {
         name,
         link,
         websocket_link,
-        ST_AsGeoJSON(region) as region,
+        region,
         image_url,
         user_count,
         status,
+        last_fetched_at,
         created_at,
         updated_at
        FROM instances 
@@ -101,6 +102,9 @@ app.get("/instances", async (req, res) => {
       imageUrl: row.image_url,
       userCount: row.user_count,
       status: row.status,
+      lastFetchedAt: row.last_fetched_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     }));
 
     res.json({
