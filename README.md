@@ -1,1 +1,1 @@
-# opencourier-registry
+# opencourier-demo-registry
