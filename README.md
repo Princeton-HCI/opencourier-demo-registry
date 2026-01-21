@@ -72,7 +72,7 @@ The config object is received but not persisted in the database. Basic presence 
 
 ### POST /register
 
-Register a new instance
+Register a new instance. The registry accepts full payloads and stores the raw body for auditing, but only filters out the minimum columns it needs for discovery. Send everything you have; the registry will do the filtering.
 
 **Request:**
 

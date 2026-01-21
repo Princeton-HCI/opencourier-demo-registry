@@ -17,12 +17,41 @@ app.get("/health", (req, res) => {
 
 // POST /register - Instance administrator registers their instance
 app.post("/register", async (req, res) => {
-  const { details, config } = req.body;
+  // Accept any payload shape and filter what we need
+  const payload = req.body || {};
+  const normalizedDetails =
+    payload.details ||
+    payload.metadata ||
+    payload.instanceDetails ||
+    payload.instanceConfig?.details ||
+    payload.instance_config?.details ||
+    {};
 
-  // Basic presence checks only
-  if (!details || !config) {
-    return res.status(400).json({ error: "details and config are required" });
-  }
+  const normalizedConfig =
+    payload.config ||
+    payload.configuration ||
+    payload.instanceConfiguration ||
+    payload.instance_config ||
+    payload.instanceConfig ||
+    {};
+
+  const details = {
+    name: normalizedDetails.name ?? payload.name,
+    link: normalizedDetails.link ?? payload.link,
+    websocketLink: normalizedDetails.websocketLink ?? payload.websocketLink,
+    region: normalizedDetails.region ?? payload.region ?? null,
+    imageUrl: normalizedDetails.imageUrl ?? payload.imageUrl ?? null,
+    userCount: normalizedDetails.userCount ?? payload.userCount ?? null,
+    rulesUrl: normalizedDetails.rulesUrl ?? payload.rulesUrl,
+    descriptionUrl: normalizedDetails.descriptionUrl ?? payload.descriptionUrl,
+    termsOfServiceUrl:
+      normalizedDetails.termsOfServiceUrl ?? payload.termsOfServiceUrl,
+    privacyPolicyUrl:
+      normalizedDetails.privacyPolicyUrl ?? payload.privacyPolicyUrl,
+  };
+
+  const updatedAt = payload.updatedAt ?? null;
+
   const requiredMetaKeys = [
     "name",
     "link",
@@ -40,25 +69,56 @@ app.post("/register", async (req, res) => {
       .json({ error: `Missing details fields: ${missing.join(", ")}` });
   }
 
+  const regionGeoJson =
+    details.region && typeof details.region === "object"
+      ? JSON.stringify(details.region)
+      : details.region;
+
   try {
     const result = await pool.query(
       `INSERT INTO instances 
-       (name, link, websocket_link, region, image_url, user_count, status) 
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending')
-       RETURNING *;`,
+       (name, link, websocket_link, region, image_url, user_count, status, last_fetched_at, created_at, updated_at) 
+       VALUES ($1, $2, $3, CASE WHEN $4 IS NULL THEN NULL ELSE ST_GeomFromGeoJSON($4::text) END, $5, $6, 'pending', NOW(), NOW(), $7)
+       RETURNING 
+         id,
+         name,
+         link,
+         websocket_link,
+         ST_AsGeoJSON(region) AS region_geojson,
+         image_url,
+         user_count,
+         status,
+         last_fetched_at,
+         created_at,
+         updated_at;`,
       [
         details.name,
         details.link,
         details.websocketLink,
-        details.region ? JSON.stringify(details.region) : null,
+        regionGeoJson,
         details.imageUrl || null,
         details.userCount || 0,
+        updatedAt,
       ],
     );
 
+    const row = result.rows[0];
+
     res.status(201).json({
       message: "Instance registered successfully. Pending verification.",
-      instance: result.rows[0],
+      instance: {
+        id: row.id,
+        name: row.name,
+        link: row.link,
+        websocketLink: row.websocket_link,
+        region: row.region_geojson ? JSON.parse(row.region_geojson) : null,
+        imageUrl: row.image_url,
+        userCount: row.user_count,
+        status: row.status,
+        lastFetchedAt: row.last_fetched_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
     });
   } catch (error) {
     if (error.code === "23505") {
@@ -80,7 +140,7 @@ app.get("/instances", async (req, res) => {
         name,
         link,
         websocket_link,
-        region,
+        ST_AsGeoJSON(region) AS region_geojson,
         image_url,
         user_count,
         status,
@@ -98,7 +158,7 @@ app.get("/instances", async (req, res) => {
       name: row.name,
       link: row.link,
       websocketLink: row.websocket_link,
-      region: row.region ? JSON.parse(row.region) : null,
+      region: row.region_geojson ? JSON.parse(row.region_geojson) : null,
       imageUrl: row.image_url,
       userCount: row.user_count,
       status: row.status,
