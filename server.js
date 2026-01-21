@@ -69,6 +69,7 @@ app.post("/register", async (req, res) => {
       .json({ error: `Missing details fields: ${missing.join(", ")}` });
   }
 
+  // Region should already be normalized to a geometry object (Polygon/MultiPolygon) by the client
   const regionGeoJson =
     details.region && typeof details.region === "object"
       ? JSON.stringify(details.region)
@@ -78,7 +79,7 @@ app.post("/register", async (req, res) => {
     const result = await pool.query(
       `INSERT INTO instances 
        (name, link, websocket_link, region, image_url, user_count, status, last_fetched_at, created_at, updated_at) 
-       VALUES ($1, $2, $3, CASE WHEN $4 IS NULL THEN NULL ELSE ST_GeomFromGeoJSON($4::text) END, $5, $6, 'pending', NOW(), NOW(), $7)
+       VALUES ($1, $2, $3, CASE WHEN $4::text IS NULL THEN NULL ELSE ST_GeomFromGeoJSON($4::text) END, $5, $6, 'pending', NOW(), NOW(), $7)
        RETURNING 
          id,
          name,
