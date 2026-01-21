@@ -50,6 +50,8 @@ app.post("/register", async (req, res) => {
       normalizedDetails.privacyPolicyUrl ?? payload.privacyPolicyUrl,
   };
 
+  const updatedAt = payload.updatedAt ?? null;
+
   const requiredMetaKeys = [
     "name",
     "link",
@@ -75,8 +77,8 @@ app.post("/register", async (req, res) => {
   try {
     const result = await pool.query(
       `INSERT INTO instances 
-       (name, link, websocket_link, region, image_url, user_count, status, last_fetched_at) 
-       VALUES ($1, $2, $3, CASE WHEN $4 IS NULL THEN NULL ELSE ST_GeomFromGeoJSON($4::text) END, $5, $6, 'pending', NOW())
+       (name, link, websocket_link, region, image_url, user_count, status, last_fetched_at, created_at, updated_at) 
+       VALUES ($1, $2, $3, CASE WHEN $4 IS NULL THEN NULL ELSE ST_GeomFromGeoJSON($4::text) END, $5, $6, 'pending', NOW(), NOW(), $7)
        RETURNING 
          id,
          name,
@@ -96,6 +98,7 @@ app.post("/register", async (req, res) => {
         regionGeoJson,
         details.imageUrl || null,
         details.userCount || 0,
+        updatedAt,
       ],
     );
 
