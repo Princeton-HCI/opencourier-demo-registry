@@ -5,6 +5,7 @@ const pool = require("./src/db");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const METADATA_TIMEOUT_MS = 5000;
 
 // Middleware
 app.use(cors());
@@ -15,42 +16,51 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
+// Helper to fetch and validate metadata from an instance
+async function fetchAndValidateInstanceMetadata(instanceLink) {
+  let metadataUrl;
+  try {
+    metadataUrl = new URL("/metadata", instanceLink).toString();
+  } catch (err) {
+    return { error: "Invalid instance link" };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const res = await fetch(metadataUrl, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      return { error: `Instance metadata unreachable (status ${res.status})` };
+    }
+    const body = await res.text();
+    if (!body || !body.trim()) {
+      return { error: "Instance metadata endpoint returned empty response" };
+    }
+    let json;
+    try {
+      json = JSON.parse(body);
+    } catch {
+      return { error: "Instance metadata endpoint did not return valid JSON" };
+    }
+    return { data: json };
+  } catch (error) {
+    clearTimeout(timeout);
+    const reason = error.name === "AbortError" ? "timeout" : "fetch failed";
+    return { error: `Failed to verify instance metadata: ${reason}` };
+  }
+}
+
 // POST /registrations - Instance administrator registers their instance
 app.post("/registrations", async (req, res) => {
-  // Accept any payload shape and filter what we need
-  const payload = req.body || {};
-  const normalizedDetails =
-    payload.details ||
-    payload.metadata ||
-    payload.instanceDetails ||
-    payload.instanceConfig?.details ||
-    payload.instance_config?.details ||
-    {};
+  // Accept any metadata shape and filter what we need
+  const metadata = req.body || {};
 
-  const normalizedConfig =
-    payload.config ||
-    payload.configuration ||
-    payload.instanceConfiguration ||
-    payload.instance_config ||
-    payload.instanceConfig ||
-    {};
-
-  const details = {
-    name: normalizedDetails.name ?? payload.name,
-    link: normalizedDetails.link ?? payload.link,
-    websocketLink: normalizedDetails.websocketLink ?? payload.websocketLink,
-    region: normalizedDetails.region ?? payload.region ?? null,
-    imageUrl: normalizedDetails.imageUrl ?? payload.imageUrl ?? null,
-    userCount: normalizedDetails.userCount ?? payload.userCount ?? null,
-    rulesUrl: normalizedDetails.rulesUrl ?? payload.rulesUrl,
-    descriptionUrl: normalizedDetails.descriptionUrl ?? payload.descriptionUrl,
-    termsOfServiceUrl:
-      normalizedDetails.termsOfServiceUrl ?? payload.termsOfServiceUrl,
-    privacyPolicyUrl:
-      normalizedDetails.privacyPolicyUrl ?? payload.privacyPolicyUrl,
-  };
-
-  const updatedAt = payload.updatedAt ?? null;
+  const data = getRegistryData(metadata);
 
   const requiredMetaKeys = [
     "name",
@@ -61,58 +71,25 @@ app.post("/registrations", async (req, res) => {
     "userCount",
   ];
   const missing = requiredMetaKeys.filter(
-    (k) => details[k] === undefined || details[k] === null,
+    (k) => data[k] === undefined || data[k] === null,
   );
   if (missing.length) {
     return res
       .status(400)
-      .json({ error: `Missing details fields: ${missing.join(", ")}` });
+      .json({ error: `Missing fields: ${missing.join(", ")}` });
   }
 
-  // Verify the instance metadata endpoint responds with data before storing
-  let metadataUrl;
-  try {
-    metadataUrl = new URL("/metadata", details.link).toString();
-  } catch (err) {
-    return res.status(400).json({ error: "Invalid instance link" });
-  }
-
-  const metadataController = new AbortController();
-  const metadataTimeout = setTimeout(() => metadataController.abort(), 5000);
-
-  try {
-    const metadataRes = await fetch(metadataUrl, {
-      method: "GET",
-      signal: metadataController.signal,
-    });
-
-    clearTimeout(metadataTimeout);
-
-    if (!metadataRes.ok) {
-      return res.status(400).json({
-        error: `Instance metadata unreachable (status ${metadataRes.status})`,
-      });
-    }
-
-    const metadataBody = await metadataRes.text();
-    if (!metadataBody || !metadataBody.trim()) {
-      return res
-        .status(400)
-        .json({ error: "Instance metadata endpoint returned empty response" });
-    }
-  } catch (error) {
-    clearTimeout(metadataTimeout);
-    const reason = error.name === "AbortError" ? "timeout" : "fetch failed";
-    return res
-      .status(400)
-      .json({ error: `Failed to verify instance metadata: ${reason}` });
+  // Use the new helper to fetch and validate metadata
+  const metaResult = await fetchAndValidateInstanceMetadata(data.link);
+  if (metaResult.error) {
+    return res.status(400).json({ error: metaResult.error });
   }
 
   // Region should already be normalized to a geometry object (Polygon/MultiPolygon) by the client
   const regionGeoJson =
-    details.region && typeof details.region === "object"
-      ? JSON.stringify(details.region)
-      : details.region;
+    data.region && typeof data.region === "object"
+      ? JSON.stringify(data.region)
+      : data.region;
 
   try {
     const result = await pool.query(
@@ -132,13 +109,13 @@ app.post("/registrations", async (req, res) => {
          created_at,
          updated_at;`,
       [
-        details.name,
-        details.link,
-        details.websocketLink,
+        data.name,
+        data.link,
+        data.websocketLink,
         regionGeoJson,
-        details.imageUrl || null,
-        details.userCount || 0,
-        updatedAt,
+        data.imageUrl || null,
+        data.userCount || 0,
+        data.updatedAt,
       ],
     );
 
@@ -170,6 +147,76 @@ app.post("/registrations", async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
+function getRegistryData(metadata) {
+  // Accepts metadata (from POST or /metadata) and returns all the expected columns as one shape
+  const details = metadata.details;
+
+  return {
+    name: details.name ?? metadata.name,
+    link: details.link ?? metadata.link,
+    websocketLink: details.websocketLink ?? metadata.websocketLink,
+    region: details.region ?? metadata.region ?? null,
+    imageUrl: details.imageUrl ?? metadata.imageUrl ?? null,
+    userCount: details.userCount ?? metadata.userCount ?? null,
+    rulesUrl: details.rulesUrl ?? metadata.rulesUrl,
+    descriptionUrl: details.descriptionUrl ?? metadata.descriptionUrl,
+    termsOfServiceUrl: details.termsOfServiceUrl ?? metadata.termsOfServiceUrl,
+    privacyPolicyUrl: details.privacyPolicyUrl ?? metadata.privacyPolicyUrl,
+    // updatedAt comes from the top-level metadata (not inside details)
+    updatedAt: metadata.updatedAt ?? null,
+  };
+}
+
+const refreshInstanceMetadata = async (instanceRow) => {
+  // Use the new helper to fetch and validate metadata
+  const metaResult = await fetchAndValidateInstanceMetadata(instanceRow.link);
+  if (metaResult.error) {
+    console.warn(
+      `Failed to fetch metadata for ${instanceRow.link}: ${metaResult.error}`,
+    );
+    return { ok: false, reason: "fetch-failed", message: metaResult.error };
+  }
+  const response = metaResult.data;
+  console.log(response);
+
+  const data = getRegistryData(response.result);
+  const regionValue =
+    data.region && typeof data.region === "object"
+      ? JSON.stringify(data.region)
+      : (data.region ?? null);
+
+  try {
+    await pool.query(
+      `UPDATE instances
+       SET
+         name = COALESCE($1, name),
+         websocket_link = COALESCE($2, websocket_link),
+         region = ST_GeomFromGeoJSON($3),
+         image_url = COALESCE($4, image_url),
+         user_count = COALESCE($5, user_count),
+         last_fetched_at = NOW(),
+         updated_at = COALESCE($6, updated_at)
+       WHERE link = $7;`,
+      [
+        data.name ?? instanceRow.name,
+        data.websocketLink ?? instanceRow.websocket_link,
+        regionValue ?? instanceRow.region_geojson,
+        data.imageUrl ?? instanceRow.image_url,
+        data.userCount ?? instanceRow.user_count,
+        data.updatedAt,
+        instanceRow.link,
+      ],
+    );
+    return { ok: true };
+  } catch (error) {
+    const reason = error.name === "AbortError" ? "timeout" : "fetch-failed";
+    console.warn(
+      `Failed to refresh metadata for ${instanceRow.link}: ${reason} ${error.message || ""}`,
+    );
+    return { ok: false, reason, message: error.message };
+  }
+};
 
 // GET /instances - Fetch list of verified instances for mobile app
 app.get("/instances", async (req, res) => {
@@ -287,6 +334,59 @@ app.get("/registrations", async (req, res) => {
   }
 });
 
+// POST /registrations/refresh - Trigger metadata refresh for a specific instance
+app.post("/registrations/refresh", async (req, res) => {
+  const { instanceLink } = req.query;
+
+  if (!instanceLink) {
+    return res
+      .status(400)
+      .json({ error: "instanceLink query parameter is required" });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT
+        id,
+        name,
+        link,
+        websocket_link,
+        ST_AsGeoJSON(region) AS region_geojson,
+        image_url,
+        user_count,
+        status,
+        last_fetched_at,
+        created_at,
+        updated_at
+       FROM instances
+       WHERE link = $1
+       LIMIT 1;`,
+      [instanceLink],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Instance not found" });
+    }
+
+    const instance = result.rows[0];
+
+    const refreshResult = await refreshInstanceMetadata(instance);
+
+    if (!refreshResult?.ok) {
+      return res.status(502).json({
+        error: "Failed to refresh instance metadata",
+        reason: refreshResult?.reason ?? "unknown",
+        message: refreshResult?.message ?? null,
+      });
+    }
+
+    res.json({ message: "Instance metadata refreshed" });
+  } catch (error) {
+    console.error("Refresh trigger error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // DELETE /registrations - Remove an instance registration
 app.delete("/registrations", async (req, res) => {
   const instanceLink = req.query.instancelink || req.query.instanceLink;
@@ -321,5 +421,8 @@ app.listen(PORT, () => {
   console.log(`  POST /registrations - Register instance`);
   console.log(`  GET /instances - Get verified instances`);
   console.log(`  GET /registrations - Get registration status`);
+  console.log(
+    `  POST /registrations/refresh - Trigger metadata refresh for instance`,
+  );
   console.log(`  DELETE /registrations - Remove instance registration`);
 });
