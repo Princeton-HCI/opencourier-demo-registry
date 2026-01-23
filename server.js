@@ -15,8 +15,8 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// POST /register - Instance administrator registers their instance
-app.post("/register", async (req, res) => {
+// POST /registrations - Instance administrator registers their instance
+app.post("/registrations", async (req, res) => {
   // Accept any payload shape and filter what we need
   const payload = req.body || {};
   const normalizedDetails =
@@ -69,6 +69,45 @@ app.post("/register", async (req, res) => {
       .json({ error: `Missing details fields: ${missing.join(", ")}` });
   }
 
+  // Verify the instance metadata endpoint responds with data before storing
+  let metadataUrl;
+  try {
+    metadataUrl = new URL("/metadata", details.link).toString();
+  } catch (err) {
+    return res.status(400).json({ error: "Invalid instance link" });
+  }
+
+  const metadataController = new AbortController();
+  const metadataTimeout = setTimeout(() => metadataController.abort(), 5000);
+
+  try {
+    const metadataRes = await fetch(metadataUrl, {
+      method: "GET",
+      signal: metadataController.signal,
+    });
+
+    clearTimeout(metadataTimeout);
+
+    if (!metadataRes.ok) {
+      return res.status(400).json({
+        error: `Instance metadata unreachable (status ${metadataRes.status})`,
+      });
+    }
+
+    const metadataBody = await metadataRes.text();
+    if (!metadataBody || !metadataBody.trim()) {
+      return res
+        .status(400)
+        .json({ error: "Instance metadata endpoint returned empty response" });
+    }
+  } catch (error) {
+    clearTimeout(metadataTimeout);
+    const reason = error.name === "AbortError" ? "timeout" : "fetch failed";
+    return res
+      .status(400)
+      .json({ error: `Failed to verify instance metadata: ${reason}` });
+  }
+
   // Region should already be normalized to a geometry object (Polygon/MultiPolygon) by the client
   const regionGeoJson =
     details.region && typeof details.region === "object"
@@ -79,7 +118,7 @@ app.post("/register", async (req, res) => {
     const result = await pool.query(
       `INSERT INTO instances 
        (name, link, websocket_link, region, image_url, user_count, status, last_fetched_at, created_at, updated_at) 
-       VALUES ($1, $2, $3, CASE WHEN $4::text IS NULL THEN NULL ELSE ST_GeomFromGeoJSON($4::text) END, $5, $6, 'pending', NOW(), NOW(), $7)
+       VALUES ($1, $2, $3, CASE WHEN $4::text IS NULL THEN NULL ELSE ST_GeomFromGeoJSON($4::text) END, $5, $6, 'verified', NOW(), NOW(), $7)
        RETURNING 
          id,
          name,
@@ -106,7 +145,7 @@ app.post("/register", async (req, res) => {
     const row = result.rows[0];
 
     res.status(201).json({
-      message: "Instance registered successfully. Pending verification.",
+      message: "Instance registered and verified successfully.",
       instance: {
         id: row.id,
         name: row.name,
@@ -134,7 +173,29 @@ app.post("/register", async (req, res) => {
 
 // GET /instances - Fetch list of verified instances for mobile app
 app.get("/instances", async (req, res) => {
+  const { lat, lng } = req.query;
+
+  // Default coordinates: Princeton, NJ
+  const DEFAULT_LAT = 40.344;
+  const DEFAULT_LNG = -74.6514;
+
+  // Use provided coordinates or fall back to default
+  let latitude, longitude;
+
+  if (lat !== undefined && lng !== undefined) {
+    latitude = parseFloat(lat);
+    longitude = parseFloat(lng);
+
+    if (isNaN(latitude) || isNaN(longitude)) {
+      return res.status(400).json({ error: "Invalid latitude or longitude" });
+    }
+  } else {
+    latitude = DEFAULT_LAT;
+    longitude = DEFAULT_LNG;
+  }
+
   try {
+    // Always sort by distance from coordinates (provided or default)
     const result = await pool.query(
       `SELECT 
         id,
@@ -147,10 +208,15 @@ app.get("/instances", async (req, res) => {
         status,
         last_fetched_at,
         created_at,
-        updated_at
+        updated_at,
+        ST_Distance(
+          region::geography,
+          ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+        ) AS distance_meters
        FROM instances 
        WHERE status = 'verified'
-       ORDER BY created_at DESC;`,
+       ORDER BY distance_meters ASC NULLS LAST;`,
+      [longitude, latitude],
     );
 
     // Format response with camelCase for frontend
@@ -166,6 +232,7 @@ app.get("/instances", async (req, res) => {
       lastFetchedAt: row.last_fetched_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      distanceMeters: row.distance_meters,
     }));
 
     res.json({
@@ -178,10 +245,81 @@ app.get("/instances", async (req, res) => {
   }
 });
 
+// GET /registrations - Fetch registration status for admin dashboard
+app.get("/registrations", async (req, res) => {
+  const { instanceLink } = req.query;
+
+  if (!instanceLink) {
+    return res
+      .status(400)
+      .json({ error: "instanceLink query parameter is required" });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT 
+        link,
+        status,
+        last_fetched_at,
+        created_at
+       FROM instances 
+       WHERE link = $1
+       LIMIT 1;`,
+      [instanceLink],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Instance not found" });
+    }
+
+    const row = result.rows[0];
+
+    res.json({
+      instanceLink: row.link,
+      status: row.status,
+      reason: null,
+      createdAt: row.created_at,
+      lastFetchedAt: row.last_fetched_at,
+    });
+  } catch (error) {
+    console.error("Fetch registration status error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// DELETE /registrations - Remove an instance registration
+app.delete("/registrations", async (req, res) => {
+  const instanceLink = req.query.instancelink || req.query.instanceLink;
+
+  if (!instanceLink) {
+    return res
+      .status(400)
+      .json({ error: "instanceLink query parameter is required" });
+  }
+
+  try {
+    const result = await pool.query(
+      "DELETE FROM instances WHERE link = $1 RETURNING id;",
+      [instanceLink],
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Instance not found" });
+    }
+
+    res.json({ message: "Instance registration deleted" });
+  } catch (error) {
+    console.error("Delete registration error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`Registry server running on http://localhost:${PORT}`);
   console.log(`Available endpoints:`);
-  console.log(`  POST /register - Register instance`);
+  console.log(`  POST /registrations - Register instance`);
   console.log(`  GET /instances - Get verified instances`);
+  console.log(`  GET /registrations - Get registration status`);
+  console.log(`  DELETE /registrations - Remove instance registration`);
 });

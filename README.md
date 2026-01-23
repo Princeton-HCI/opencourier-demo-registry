@@ -8,8 +8,9 @@ This registry allows couriers to discover instances and admins to register their
 
 ## Features
 
-- **Instance Registration**: Admins can register their instances via POST `/register`
+- **Instance Registration**: Admins can register their instances via POST `/registrations`
 - **Instance Discovery**: Mobile app can fetch verified instances via GET `/instances`
+- **Instance Removal**: Admins can remove registrations via DELETE `/registrations?instanceLink=...`
 - **Geographic Support**: Uses PostGIS for storing geographic regions
 - **Status-based Filtering**: Only verified instances are returned to mobile app
 - **Flexible Schema**: Stores all instance metadata with ability to adapt to new attributes
@@ -70,7 +71,7 @@ The config object is received but not persisted in the database. Basic presence 
 
 ## API Endpoints
 
-### POST /register
+### POST /registrations
 
 Register a new instance. The registry accepts full payloads and stores the raw body for auditing, but only filters out the minimum columns it needs for discovery. Send everything you have; the registry will do the filtering.
 
@@ -154,6 +155,25 @@ Fetch all verified instances (demo registry returns minimum required fields only
 }
 ```
 
+### DELETE /registrations
+
+Delete a registration by instance link.
+
+**Query parameter:**
+
+- `instanceLink` (required): Exact instance `link` value to delete.
+
+**Request:** `DELETE /registrations?instanceLink=https://downtown-delivery.com`
+
+**Response:** `200 OK`
+
+```json
+{
+  "message": "Instance registration deleted"
+}
+```
+If the instance does not exist, the endpoint returns `404`.
+
 ## Database Schema
 
 The `instances` table stores minimum requirements for efficient mobile app queries:
@@ -196,8 +216,9 @@ https://your-render-service-name.onrender.com
 
 Admins can then:
 
-- Register via: `POST https://your-render-service-name.onrender.com/register`
+- Register via: `POST https://your-render-service-name.onrender.com/registrations`
 - Mobile app queries: `GET https://your-render-service-name.onrender.com/instances`
+- Remove a registration: `DELETE https://your-render-service-name.onrender.com/registrations?instanceLink=...`
 
 ## Curation (Future)
 
