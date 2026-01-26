@@ -268,18 +268,23 @@ app.get("/instances", async (req, res) => {
 
     // Format response with camelCase for frontend
     const instances = result.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      link: row.link,
-      websocketLink: row.websocket_link,
-      region: row.region_geojson ? JSON.parse(row.region_geojson) : null,
-      imageUrl: row.image_url,
-      userCount: row.user_count,
-      status: row.status,
-      lastFetchedAt: row.last_fetched_at,
-      createdAt: row.created_at,
+      registry: {
+        id: row.id,
+        status: row.status,
+        lastFetchedAt: row.last_fetched_at,
+        distanceMeters: row.distance_meters,
+      },
+      details: {
+        name: row.name,
+        link: row.link,
+        websocketLink: row.websocket_link,
+        imageUrl: row.image_url,
+        region: row.region_geojson ? JSON.parse(row.region_geojson) : null,
+        userCount: row.user_count,
+        createdAt: row.created_at,
+      },
+      config: {},
       updatedAt: row.updated_at,
-      distanceMeters: row.distance_meters,
     }));
 
     res.json({
