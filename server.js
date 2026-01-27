@@ -341,12 +341,12 @@ app.get("/registrations", async (req, res) => {
 
 // POST /registrations/refresh - Trigger metadata refresh for a specific instance
 app.post("/registrations/refresh", async (req, res) => {
-  const { instanceLink } = req.query;
+  const { instanceLink } = req.body;
 
   if (!instanceLink) {
     return res
       .status(400)
-      .json({ error: "instanceLink query parameter is required" });
+      .json({ error: "instanceLink is required in request body" });
   }
 
   try {
@@ -375,17 +375,13 @@ app.post("/registrations/refresh", async (req, res) => {
 
     const instance = result.rows[0];
 
-    const refreshResult = await refreshInstanceMetadata(instance);
+    // fire-and-forget
+    void refreshInstanceMetadata(instance);
 
-    if (!refreshResult?.ok) {
-      return res.status(502).json({
-        error: "Failed to refresh instance metadata",
-        reason: refreshResult?.reason ?? "unknown",
-        message: refreshResult?.message ?? null,
-      });
-    }
-
-    res.json({ message: "Instance metadata refreshed" });
+    // 202 = accepted, processing async
+    res.status(202).json({
+      message: "Metadata refresh triggered",
+    });
   } catch (error) {
     console.error("Refresh trigger error:", error);
     res.status(500).json({ error: "Internal server error" });
