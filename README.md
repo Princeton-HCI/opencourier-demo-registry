@@ -49,9 +49,11 @@ The config object is received but not persisted in the database. Basic presence 
 
 1. **Clone and install**
 
-   ```bash
-   npm install
-   ```
+```bash
+yarn install
+# or
+npm install
+```
 
 2. **Set up environment**
 
@@ -62,14 +64,27 @@ The config object is received but not persisted in the database. Basic presence 
 
 3. **Initialize database**
 
-   ```bash
-   npm run db:setup
-   ```
+```bash
+yarn db:setup
+# or
+npm run db:setup
+```
 
 4. **Run development server**
-   ```bash
-   npm run dev
-   ```
+
+```bash
+yarn dev
+# or
+npm run dev
+```
+
+5. **Run production server**
+
+```bash
+yarn start
+# or
+npm start
+```
 
 ## API Endpoints
 
@@ -248,8 +263,8 @@ The `instances` table stores minimum requirements for efficient mobile app queri
 1. Create a new Web Service on Render
 2. Connect your GitHub repository
 3. Set environment variable `DATABASE_URL`
-4. Set build command: `npm install`
-5. Set start command: `npm start`
+4. Set build command: `yarn install` (or `npm install`)
+5. Set start command: `yarn start` (or `npm start`)
 
 ### Getting Your Registry Link
 
