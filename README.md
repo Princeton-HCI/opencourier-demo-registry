@@ -19,7 +19,7 @@ This registry allows couriers to discover instances and admins to register their
 
 ## Minimum Required Data for Demo Registry
 
-The demo registry accepts a POST request with `metadata` and `config` objects, but only stores the minimum required fields as database columns:
+The demo registry accepts a POST request with instance fields at the top level (or under `details`) and only stores the minimum required fields as database columns:
 
 **Metadata Fields Stored in Database:**
 
@@ -34,8 +34,8 @@ The demo registry accepts a POST request with `metadata` and `config` objects, b
 
 - `rulesUrl`, `descriptionUrl`, `termsOfServiceUrl`, `privacyPolicyUrl`
 
-**Config (received but not stored):**
-The config object is received but not persisted in the database. Basic presence is expected; instances manage their own configuration.
+**Config (ignored by this registry):**
+If clients include a `config` object, it is ignored by this registry. Other registries can utilize the data under `config`.
 
 ## Setup
 
@@ -90,52 +90,33 @@ npm start
 
 ### POST /registrations
 
-Register a new instance. The registry accepts full payloads and stores the raw body for auditing, but only filters out the minimum columns it needs for discovery. Send everything you have; the registry will do the filtering.
+Register a new instance. The registry accepts extra fields but only stores the minimum columns it needs for discovery. On registration it verifies the instance by fetching its `/metadata` endpoint; successful fetch and valid JSON results in `verified` status.
 
 **Request:**
 
 ```json
 {
-  "metadata": {
-    "name": "Downtown Delivery",
-    "link": "https://downtown-delivery.com",
-    "websocketLink": "wss://downtown-delivery.com/ws",
-    "region": {
-      "type": "FeatureCollection",
-      "features": [
-        {
-          "type": "Feature",
-          "geometry": {
-            "type": "Point",
-            "coordinates": [-74.006, 40.7128]
-          }
+  "name": "Downtown Delivery",
+  "link": "https://downtown-delivery.com",
+  "websocketLink": "wss://downtown-delivery.com/ws",
+  "region": {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": {
+          "type": "Point",
+          "coordinates": [-74.006, 40.7128]
         }
-      ]
-    },
-    "imageUrl": "https://downtown-delivery.com/logo.png",
-    "userCount": 150,
-    "rulesUrl": "https://downtown-delivery.com/rules",
-    "descriptionUrl": "https://downtown-delivery.com/description",
-    "termsOfServiceUrl": "https://downtown-delivery.com/tos",
-    "privacyPolicyUrl": "https://downtown-delivery.com/privacy"
+      }
+    ]
   },
-  "config": {
-    "courierMatcherType": "distance-based",
-    "quoteCalculationType": "dynamic",
-    "geoCalculationType": "haversine",
-    "deliveryDurationCalculationType": "historical",
-    "courierCompensationCalculationType": "base-plus-distance",
-    "maxAssignmentDistance": 5000,
-    "maxDriftDistance": 500,
-    "quoteExpirationMinutes": 30,
-    "feePercentageAmount": 15,
-    "defaultCourierPayRate": 0.5,
-    "defaultMinimumCourierPay": 5.0,
-    "defaultMaxWorkingHours": 8,
-    "defaultDietaryRestrictions": ["vegetarian"],
-    "distanceUnit": "meters",
-    "currency": "USD"
-  }
+  "imageUrl": "https://downtown-delivery.com/logo.png",
+  "userCount": 150,
+  "rulesUrl": "https://downtown-delivery.com/rules",
+  "descriptionUrl": "https://downtown-delivery.com/description",
+  "termsOfServiceUrl": "https://downtown-delivery.com/tos",
+  "privacyPolicyUrl": "https://downtown-delivery.com/privacy"
 }
 ```
 
@@ -150,7 +131,7 @@ Register a new instance. The registry accepts full payloads and stores the raw b
 
 ### GET /instances
 
-Fetch all verified instances (demo registry returns minimum required fields only)
+Fetch all verified instances (sorted by distance from coordinates)
 
 **Response:** `200 OK`
 
@@ -158,14 +139,23 @@ Fetch all verified instances (demo registry returns minimum required fields only
 {
   "instances": [
     {
-      "id": 1,
-      "name": "Downtown Delivery",
-      "link": "https://downtown-delivery.com",
-      "websocketLink": "wss://downtown-delivery.com/ws",
-      "region": { ... },
-      "imageUrl": "https://downtown-delivery.com/logo.png",
-      "userCount": 150,
-      "status": "verified"
+      "registry": {
+        "id": 1,
+        "status": "verified",
+        "lastFetchedAt": "2024-01-01T12:05:00.000Z",
+        "distanceMeters": 1234.56
+      },
+      "details": {
+        "name": "Downtown Delivery",
+        "link": "https://downtown-delivery.com",
+        "websocketLink": "wss://downtown-delivery.com/ws",
+        "imageUrl": "https://downtown-delivery.com/logo.png",
+        "region": { ... },
+        "userCount": 150,
+        "createdAt": "2024-01-01T12:00:00.000Z"
+      },
+      "config": {},
+      "updatedAt": "2024-01-01T12:10:00.000Z"
     }
   ],
   "count": 1
@@ -282,8 +272,8 @@ Admins can then:
 
 ## Curation (Future)
 
-- Currently all registrations are pending (require manual approval)
-- Future: Implement automatic verification based on domain verification
+- Registrations are automatically marked `verified` after a successful fetch of the instance `/metadata` endpoint
+- Future: Add additional verification/approval steps beyond the metadata check
 - Future: Add endpoints for admin panel to approve/reject registrations
 
 ## Notes
