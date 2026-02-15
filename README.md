@@ -10,6 +10,8 @@ This registry allows couriers to discover instances and admins to register their
 
 - **Instance Registration**: Admins can register their instances via POST `/registrations`
 - **Instance Discovery**: Mobile app can fetch verified instances via GET `/instances`
+- **Registration Status**: Admins can check status via GET `/registrations?instanceLink=...`
+- **Metadata Refresh**: Admins can trigger refresh via POST `/registrations/refresh`
 - **Instance Removal**: Admins can remove registrations via DELETE `/registrations?instanceLink=...`
 - **Geographic Support**: Uses PostGIS for storing geographic regions
 - **Status-based Filtering**: Only verified instances are returned to mobile app
@@ -126,7 +128,7 @@ Register a new instance. The registry accepts full payloads and stores the raw b
 
 ```json
 {
-  "message": "Instance registered successfully. Pending verification.",
+  "message": "Instance registered and verified successfully.",
   "instance": { ... }
 }
 ```
@@ -155,6 +157,48 @@ Fetch all verified instances (demo registry returns minimum required fields only
 }
 ```
 
+### GET /registrations
+
+Fetch a registration status by instance link.
+
+**Query parameter:**
+
+- `instanceLink` (required): Exact instance `link` value to look up.
+
+**Request:** `GET /registrations?instanceLink=https://downtown-delivery.com`
+
+**Response:** `200 OK`
+
+```json
+{
+  "instanceLink": "https://downtown-delivery.com",
+  "status": "verified",
+  "reason": null,
+  "createdAt": "2024-01-01T12:00:00.000Z",
+  "lastFetchedAt": "2024-01-01T12:05:00.000Z"
+}
+```
+
+### POST /registrations/refresh
+
+Trigger a metadata refresh for a specific instance (async).
+
+**Request body:**
+
+```json
+{
+  "instanceLink": "https://downtown-delivery.com"
+}
+```
+
+**Response:** `202 Accepted`
+
+```json
+{
+  "message": "Metadata refresh triggered"
+}
+```
+
 ### DELETE /registrations
 
 Delete a registration by instance link.
@@ -172,6 +216,7 @@ Delete a registration by instance link.
   "message": "Instance registration deleted"
 }
 ```
+
 If the instance does not exist, the endpoint returns `404`.
 
 ## Database Schema
@@ -188,7 +233,7 @@ The `instances` table stores minimum requirements for efficient mobile app queri
 - `status` - 'pending' or 'verified' (only verified shown to mobile)
 - `created_at` - When instance was registered
 - `updated_at` - When instance data was last modified
-- `last_fetched_at` - When registry last fetched fresh data from instance's `/instance-config` endpoint (tracks data staleness)
+- `last_fetched_at` - When registry last fetched fresh data from instance's `/metadata` endpoint (tracks data staleness)
 
 ## Deployment to Render
 
@@ -229,5 +274,6 @@ Admins can then:
 ## Notes
 
 - Instance links cannot be changed after registration to prevent registry query failures
+- The registry validates registrations by fetching the instance `/metadata` endpoint
 - All instance metadata is public for transparency
 - Flexible schema allows registries to add custom attributes as needed
