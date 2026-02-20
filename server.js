@@ -271,6 +271,7 @@ app.get("/instances", async (req, res) => {
       registry: {
         id: row.id,
         status: row.status,
+        createdAt: row.created_at,
         lastFetchedAt: row.last_fetched_at,
         distanceMeters: row.distance_meters,
       },
@@ -281,7 +282,6 @@ app.get("/instances", async (req, res) => {
         imageUrl: row.image_url,
         region: row.region_geojson ? JSON.parse(row.region_geojson) : null,
         userCount: row.user_count,
-        createdAt: row.created_at,
       },
       config: {},
       updatedAt: row.updated_at,
