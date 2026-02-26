@@ -222,49 +222,73 @@ const refreshInstanceMetadata = async (instanceRow) => {
 app.get("/instances", async (req, res) => {
   const { lat, lng } = req.query;
 
-  // Default coordinates: Princeton, NJ
-  const DEFAULT_LAT = 40.344;
-  const DEFAULT_LNG = -74.6514;
+  const isMissingQueryValue = (value) => {
+    if (value === undefined || value === null) {
+      return true;
+    }
+    if (typeof value !== "string") {
+      return false;
+    }
+    const normalized = value.trim().toLowerCase();
+    return normalized === "" || normalized === "null" || normalized === "undefined";
+  };
 
-  // Use provided coordinates or fall back to default
-  let latitude, longitude;
+  const hasMissingCoordinates = isMissingQueryValue(lat) || isMissingQueryValue(lng);
 
-  if (lat !== undefined && lng !== undefined) {
+  let latitude = null;
+  let longitude = null;
+
+  if (!hasMissingCoordinates) {
     latitude = parseFloat(lat);
     longitude = parseFloat(lng);
 
     if (isNaN(latitude) || isNaN(longitude)) {
       return res.status(400).json({ error: "Invalid latitude or longitude" });
     }
-  } else {
-    latitude = DEFAULT_LAT;
-    longitude = DEFAULT_LNG;
   }
 
   try {
-    // Always sort by distance from coordinates (provided or default)
-    const result = await pool.query(
-      `SELECT 
-        id,
-        name,
-        link,
-        websocket_link,
-        ST_AsGeoJSON(region) AS region_geojson,
-        image_url,
-        user_count,
-        status,
-        last_fetched_at,
-        created_at,
-        updated_at,
-        ST_Distance(
-          region::geography,
-          ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
-        ) AS distance_meters
-       FROM instances 
-       WHERE status = 'verified'
-       ORDER BY distance_meters ASC NULLS LAST;`,
-      [longitude, latitude],
-    );
+    const result = hasMissingCoordinates
+      ? await pool.query(
+          `SELECT 
+            id,
+            name,
+            link,
+            websocket_link,
+            ST_AsGeoJSON(region) AS region_geojson,
+            image_url,
+            user_count,
+            status,
+            last_fetched_at,
+            created_at,
+            updated_at,
+            NULL::double precision AS distance_meters
+           FROM instances 
+           WHERE status = 'verified'
+           ORDER BY created_at ASC;`,
+        )
+      : await pool.query(
+          `SELECT 
+            id,
+            name,
+            link,
+            websocket_link,
+            ST_AsGeoJSON(region) AS region_geojson,
+            image_url,
+            user_count,
+            status,
+            last_fetched_at,
+            created_at,
+            updated_at,
+            ST_Distance(
+              region::geography,
+              ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+            ) AS distance_meters
+           FROM instances 
+           WHERE status = 'verified'
+           ORDER BY distance_meters ASC NULLS LAST;`,
+          [longitude, latitude],
+        );
 
     // Format response with camelCase for frontend
     const instances = result.rows.map((row) => ({
